@@ -1,180 +1,164 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, Button, TextInput, Modal, Alert } from 'react-native';
+import { View, FlatList, Text, Button, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { supabase } from '../services/supabaseService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import CourseForm from '../components/CourseForm';
 
-function CourseList({ navigation }) {
+const CourseList = ({ navigation }) => {
   const [courses, setCourses] = useState([]);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [courseName, setCourseName] = useState('');
-  const [courseTerm, setCourseTerm] = useState('');
-  const [selectedCourseId, setSelectedCourseId] = useState(null);
-  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingCourse, setEditingCourse] = useState(null);
+
+  const fetchCourses = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from('courses')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setCourses(data || []);
+    } catch (error) {
+      console.error('Error fetching courses:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCourses = async () => {
-      try {
-        const userToken = await AsyncStorage.getItem('userToken');
-        if (!userToken) {
-          navigation.replace('Auth'); // Redirect to Auth if no token
-          return;
-        }
-
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          setUserId(user.id);
-          const { data, error } = await supabase
-            .from('Courses')
-            .select('*')
-            .eq('user_id', user.id);
-
-          if (error) {
-            Alert.alert('Error fetching courses', error.message);
-          } else if (data) {
-            setCourses(data);
-          }
-        }
-      } catch (error) {
-        Alert.alert('Error', error.message);
-      }
-    };
-
     fetchCourses();
   }, []);
 
-  const openModal = (course) => {
-    setModalVisible(true);
-    if (course) {
-      setSelectedCourseId(course.id);
-      setCourseName(course.name);
-      setCourseTerm(course.term);
-    } else {
-      setSelectedCourseId(null);
-      setCourseName('');
-      setCourseTerm('');
-    }
+  const handleSaveSuccess = () => {
+    setShowForm(false);
+    setEditingCourse(null);
+    fetchCourses();
   };
 
-  const closeModal = () => {
-    setModalVisible(false);
-  };
-
-  const saveCourse = async () => {
+  const deleteCourse = async (courseId) => {
     try {
-      if (!userId) {
-        Alert.alert('Error', 'User not authenticated.');
-        return;
-      }
+      const { error } = await supabase
+        .from('courses')
+        .delete()
+        .eq('id', courseId);
 
-      if (selectedCourseId) {
-        const { error } = await supabase
-          .from('Courses')
-          .update({ name: courseName, term: courseTerm })
-          .eq('id', selectedCourseId);
-
-        if (error) {
-          Alert.alert('Error updating course', error.message);
-        } else {
-          setCourses(courses.map(c => c.id === selectedCourseId ? { ...c, name: courseName, term: courseTerm } : c));
-          closeModal();
-        }
-      } else {
-        const { data, error } = await supabase
-          .from('Courses')
-          .insert([{ user_id: userId, name: courseName, term: courseTerm }]);
-
-        if (error) {
-          Alert.alert('Error adding course', error.message);
-        } else if (data) {
-          setCourses([...courses, data[0]]);
-          closeModal();
-        }
-      }
+      if (error) throw error;
+      fetchCourses();
     } catch (error) {
-      Alert.alert('Error saving course', error.message);
+      console.error('Error deleting course:', error);
+      Alert.alert('Error', 'Failed to delete course');
     }
   };
 
-  const deleteCourse = async (id) => {
-    Alert.alert(
-      "Delete Course",
-      "Are you sure you want to delete this course?",
-      [
-        {
-          text: "Cancel",
-          style: "cancel"
-        },
-        {
-          text: "Delete",
-          onPress: async () => {
-            try {
-              const { error } = await supabase
-                .from('Courses')
-                .delete()
-                .eq('id', id);
-
-              if (error) {
-                Alert.alert('Error deleting course', error.message);
-              } else {
-                setCourses(courses.filter(course => course.id !== id));
-              }
-            } catch (error) {
-              Alert.alert('Error', error.message);
-            }
-          }
-        }
-      ]
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" />
+      </View>
     );
-  };
+  }
 
   return (
-    <View style={{ flex: 1, padding: 16 }}>
-      <Text style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 16 }}>Courses</Text>
-      <FlatList
-        data={courses}
-        keyExtractor={item => item.id.toString()}
-        renderItem={({ item }) => (
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <Text onPress={() => navigation.navigate('CourseDetails', { courseId: item.id, courseName: item.name })}>{item.name} ({item.term})</Text>
-            <View style={{ flexDirection: 'row' }}>
-              <Button title="Edit" onPress={() => openModal(item)} />
-              <Button title="Delete" onPress={() => deleteCourse(item.id)} />
-            </View>
-          </View>
-        )}
-      />
-      <Button title="Add Course" onPress={() => openModal(null)} />
+    <View style={styles.container}>
+      {!showForm ? (
+        <>
+          <Button 
+            title="Add Course" 
+            onPress={() => {
+              setEditingCourse(null);
+              setShowForm(true);
+            }}
+          />
 
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={closeModal}
-      >
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <View style={{ backgroundColor: 'white', padding: 20, borderRadius: 10, width: '80%' }}>
-            <Text style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 10 }}>{selectedCourseId ? 'Edit Course' : 'Add Course'}</Text>
-            <TextInput
-              placeholder="Course Name"
-              value={courseName}
-              onChangeText={setCourseName}
-              style={{ height: 40, borderColor: 'gray', borderWidth: 1, marginBottom: 10, paddingHorizontal: 10 }}
-            />
-            <TextInput
-              placeholder="Term"
-              value={courseTerm}
-              onChangeText={setCourseTerm}
-              style={{ height: 40, borderColor: 'gray', borderWidth: 1, marginBottom: 20, paddingHorizontal: 10 }}
-            />
-            <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
-              <Button title="Cancel" onPress={closeModal} />
-              <Button title="Save" onPress={saveCourse} />
-            </View>
-          </View>
-        </View>
-      </Modal>
+          <FlatList
+            data={courses}
+            renderItem={({ item }) => (
+              <View style={styles.courseItem}>
+                <Text style={styles.courseName}>{item.name}</Text>
+                <Text style={styles.courseTerm}>Semester {item.semester}</Text>
+
+                <View style={styles.buttonGroup}>
+                  <Button
+                    title="Edit"
+                    onPress={() => {
+                      setEditingCourse(item);
+                      setShowForm(true);
+                    }}
+                  />
+                  <Button
+                    title="Details"
+                    onPress={() => navigation.navigate('CourseDetailsScreen', { courseId: item.id })}
+                  />
+                  <Button
+                    title="Delete"
+                    onPress={() => deleteCourse(item.id)}
+                  />
+                </View>
+              </View>
+            )}
+            keyExtractor={item => item.id}
+            ListEmptyComponent={
+              !showForm && (
+                <Text style={styles.emptyText}>
+                  No courses found. Add your first course!
+                </Text>
+              )
+            }
+          />
+        </>
+      ) : (
+        <CourseForm
+          course={editingCourse}
+          onSave={handleSaveSuccess}
+          onCancel={() => {
+            setShowForm(false);
+            setEditingCourse(null);
+          }}
+        />
+      )}
     </View>
   );
-}
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  courseItem: {
+    padding: 16,
+    marginBottom: 12,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+  },
+  courseName: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  courseTerm: {
+    fontSize: 14,
+    color: '#666',
+  },
+  buttonGroup: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  emptyText: {
+    textAlign: 'center',
+    marginTop: 20,
+    fontSize: 16,
+    color: '#666',
+  },
+});
 
 export default CourseList;

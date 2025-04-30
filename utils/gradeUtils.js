@@ -1,62 +1,63 @@
 export const calculateCourseAverage = (assignments, gradingCriteria) => {
-    if (!assignments || assignments.length === 0 || !gradingCriteria || gradingCriteria.length === 0) {
-      return null;
+  // Validate inputs
+  if (!Array.isArray(assignments) || !Array.isArray(gradingCriteria)) return null;
+  
+  if (assignments.length === 0) return null;
+
+  // Calculate total weight to verify it sums to 100%
+  const totalWeight = gradingCriteria.reduce((sum, criterion) => sum + criterion.weight, 0);
+  if (Math.abs(totalWeight - 100) > 0.01) {
+    console.warn('Grading criteria weights do not sum to 100%');
+    return null;
+  }
+
+  // Group assignments by category and calculate category averages
+  const categoryResults = gradingCriteria.map(criterion => {
+    const categoryAssignments = assignments.filter(a => a.category === criterion.category);
+    
+    if (categoryAssignments.length === 0) {
+      return { weight: criterion.weight, average: null };
     }
-  
-    let weightedSum = 0;
-    let totalWeight = 0;
-  
-    gradingCriteria.forEach(criterion => {
-      let categoryAssignments = assignments.filter(assignment =>
-        assignment.title.toLowerCase().includes(criterion.category.toLowerCase()) 
-      );
-      if (categoryAssignments.length > 0) {
-        let categoryWeightedSum = categoryAssignments.reduce((sum, assignment) => {
-          return sum + (assignment.grade * assignment.weight / 100);
-        }, 0);
-        let categoryTotalWeight = categoryAssignments.reduce((sum, assignment) => sum + (assignment.weight / 100), 0);
-  
-        weightedSum += (categoryWeightedSum / categoryTotalWeight) * criterion.weight;
-        totalWeight += criterion.weight;
-      }
-    });
-  
-    if (totalWeight === 0) {
-      return null;
+
+    const totalPoints = categoryAssignments.reduce((sum, a) => sum + (a.grade || 0) * (a.weight || 0), 0);
+    const totalWeight = categoryAssignments.reduce((sum, a) => sum + (a.weight || 0), 0);
+    
+    const weightedAverage = totalWeight > 0 ? totalPoints / totalWeight : 0;
+    return { weight: criterion.weight, average: weightedAverage };
+  });
+
+  // Calculate overall weighted average
+  let totalWeightedGrade = 0;
+  let totalAppliedWeight = 0;
+
+  categoryResults.forEach(({ weight, average }) => {
+    if (average !== null) {
+      totalWeightedGrade += average * (weight / 100);
+      totalAppliedWeight += weight;
     }
+  });
+
+  if (totalAppliedWeight === 0) return null;
+
+  const finalGrade = totalWeightedGrade * (100 / totalAppliedWeight);
   
-    return weightedSum / totalWeight;
-  };
-  
-  export const calculateGPA = async (courses, fetchAssignments, fetchGradingCriteria) => {
-    if (!courses || courses.length === 0) {
-      return null;
-    }
-  
-    let totalWeightedAverage = 0;
-    let totalCourses = courses.length;
-  
-    for (const course of courses) {
-      const assignments = await fetchAssignments(course.id);
-      const criteria = await fetchGradingCriteria(course.id);
-      const courseAverage = calculateCourseAverage(assignments, criteria);
-  
-      if (courseAverage !== null) {
-        totalWeightedAverage += courseAverage;
-      } else {
-        totalCourses--;
-      }
-    }
-  
-    if (totalCourses === 0) {
-      return null;
-    }
-  
-    const overallAverage = totalWeightedAverage / totalCourses;
-  
-    if (overallAverage >= 90) return 4.0;
-    if (overallAverage >= 80) return 3.0;
-    if (overallAverage >= 70) return 2.0;
-    if (overallAverage >= 60) return 1.0;
-    return 0.0;
-  };
+  return Math.max(0, Math.min(100, finalGrade));
+};
+
+
+export const getLetterGrade = (grade) => {
+  if (grade >= 90) return 'A';
+  if (grade >= 80) return 'B';
+  if (grade >= 70) return 'C';
+  if (grade >= 60) return 'D';
+  return 'F';
+};
+
+
+export const getGradeColor = (grade) => {
+  if (grade >= 90) return '#4CAF50';
+  if (grade >= 80) return '#8BC34A';
+  if (grade >= 70) return '#FFC107';
+  if (grade >= 60) return '#FF9800';
+  return '#F44336'; 
+};
