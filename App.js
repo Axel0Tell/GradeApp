@@ -8,6 +8,7 @@ import CourseList from './screens/CourseList';
 import CourseDetails from './screens/CourseDetails';
 import GoalSetting from './screens/GoalSetting';
 import GradeReport from './screens/GradeReport';
+import Profile from './screens/Profile';
 import LoadingScreen from './screens/LoadingScreen';
 import { supabase } from './services/supabaseService';
 import { ThemeProvider } from './contexts/ThemeContext';
@@ -25,6 +26,7 @@ function MainAppTabs() {
           if (route.name === 'CoursesTab') iconName = focused ? 'book' : 'book-outline';
           if (route.name === 'GoalsTab') iconName = focused ? 'flag' : 'flag-outline';
           if (route.name === 'ReportTab') iconName = focused ? 'analytics' : 'analytics-outline';
+          if (route.name === 'ProfileTab') iconName = focused ? 'person' : 'person-outline';
           return <Ionicons name={iconName} size={size} color={color} />;
         },
         tabBarActiveTintColor: '#007AFF',
@@ -45,6 +47,11 @@ function MainAppTabs() {
         name="ReportTab" 
         component={GradeReport} 
         options={{ title: 'Report' }}
+      />
+      <Tab.Screen 
+        name="ProfileTab" 
+        component={Profile} 
+        options={{ title: 'Profile' }}
       />
     </Tab.Navigator>
   );
