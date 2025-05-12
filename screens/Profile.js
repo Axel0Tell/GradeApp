@@ -11,18 +11,23 @@ import {
   Modal,
   Image,
   Button,
-  Platform
+  Platform,
+  Pressable
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Picker } from '@react-native-picker/picker';
+import * as FileSystem from 'expo-file-system';
 import { supabase } from '../services/supabaseService';
 import { useTheme } from '../contexts/ThemeContext';
+
+const SUPABASE_PROJECT_REF = 'rmhxczezynardogopcpr';
 
 function Profile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showViewProfile, setShowViewProfile] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [showGradePicker, setShowGradePicker] = useState(false);
+  const [showCoursePicker, setShowCoursePicker] = useState(false);
   const [profile, setProfile] = useState({
     fullName: '',
     grade: '',
@@ -59,55 +64,76 @@ function Profile() {
   }, []);
 
   const handleImageUpload = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      alert('No user found');
-      return;
-    }
-    if (Platform.OS === 'web') {
-      // Trigger file input for web
-      fileInputRef.current.click();
-    } else {
-      // Use expo-image-picker for mobile
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        alert('Permission to access media library is required!');
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (!user || userError) throw new Error('No user found');
+
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permissionResult.status !== 'granted') {
+        Alert.alert('Permission required', 'Camera roll access is needed!');
         return;
       }
+
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.7,
+        quality: 0.8,
       });
-      if (result.canceled || !result.assets || !result.assets[0].uri) {
-        alert('No image selected!');
-        return;
-      }
-      const uri = result.assets[0].uri;
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const fileExt = uri.split('.').pop();
+
+      if (result.canceled || !result.assets || !result.assets[0]?.uri) return;
+
+      const asset = result.assets[0];
+      const uri = asset.uri;
+      const fileExt = uri.split('.').pop().split('?')[0];
       const fileName = `${user.id}-${Date.now()}.${fileExt}`;
       const filePath = `${user.id}/${fileName}`;
-      const { data, error } = await supabase.storage
-        .from('avatars')
-        .upload(filePath, blob, { upsert: true });
-      if (error) {
-        alert('Upload failed: ' + error.message);
-        return;
+
+      // Get the user's access token
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) throw new Error('No access token found');
+
+      // Upload using FileSystem.uploadAsync
+      const uploadUrl = `https://${SUPABASE_PROJECT_REF}.supabase.co/storage/v1/object/avatars/${filePath}`;
+      const uploadResult = await FileSystem.uploadAsync(
+        uploadUrl,
+        uri,
+        {
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': `image/${fileExt === 'jpg' ? 'jpeg' : fileExt}`,
+          },
+        }
+      );
+
+      if (uploadResult.status !== 200 && uploadResult.status !== 201) {
+        throw new Error('Upload failed: ' + uploadResult.body);
       }
-      const { data: publicData } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
+
+      // Get public URL
+      const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
+      const publicUrl = data.publicUrl;
+      console.log('Public URL:', publicUrl);
+
+      // Save public URL to profile
       await supabase
         .from('profiles')
-        .update({ avatar_url: publicData.publicUrl })
+        .update({ avatar_url: publicUrl })
         .eq('id', user.id);
-      await fetchProfile();
-      alert('Upload success!');
+
+      setProfile(prev => ({ ...prev, avatar_url: publicUrl }));
+
+      Alert.alert('Success', 'Image uploaded successfully!');
+    } catch (err) {
+      console.error(err);
+      Alert.alert('Error', err.message || 'Something went wrong');
     }
   };
+  
+  
+  
 
   // Handle file input change for web
   const handleFileChange = async (e) => {
@@ -210,58 +236,49 @@ function Profile() {
     }
   };
 
-  const deleteProfilePicture = async () => {
+  const handleDeletePhoto = async () => {
     try {
       setUploading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('No user found');
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (!user || userError) throw new Error('No user found');
 
       // Get the current avatar URL
       const currentAvatarUrl = profile.avatar_url;
       if (!currentAvatarUrl) return;
 
       // Extract the file path from the URL
-      const filePath = currentAvatarUrl.split('/').slice(-2).join('/');
-      console.log('Deleting file path:', filePath);
+      // Example: https://rmhxczezynardogopcpr.supabase.co/storage/v1/object/public/avatars/USER_ID/FILENAME.jpg
+      // We want: USER_ID/FILENAME.jpg
+      const urlParts = currentAvatarUrl.split('/avatars/');
+      const filePath = urlParts.length > 1 ? urlParts[1] : null;
+      if (!filePath) throw new Error('Could not extract file path from avatar URL');
 
       // Delete from storage
       const { error: deleteError } = await supabase.storage
         .from('avatars')
         .remove([filePath]);
 
-      if (deleteError) {
-        console.error('Error deleting from storage:', deleteError);
-        throw deleteError;
-      }
+      if (deleteError) throw new Error('Error deleting from storage: ' + deleteError.message);
 
       // Update profile to remove avatar_url
       const { error: updateError } = await supabase
         .from('profiles')
-        .update({ 
-          avatar_url: null,
-          updated_at: new Date().toISOString()
-        })
+        .update({ avatar_url: null, updated_at: new Date().toISOString() })
         .eq('id', user.id);
 
-      if (updateError) {
-        console.error('Error updating profile:', updateError);
-        throw updateError;
-      }
+      if (updateError) throw new Error('Error updating profile: ' + updateError.message);
 
-      // Update local state and refresh
+      // Update local state
       setProfile(prev => ({
         ...prev,
         avatar_url: null,
         updated_at: new Date().toISOString()
       }));
 
-      // Refresh profile
-      await fetchProfile();
-
       Alert.alert('Success', 'Profile picture deleted successfully');
     } catch (error) {
       console.error('Error deleting profile picture:', error);
-      Alert.alert('Error', 'Failed to delete profile picture: ' + error.message);
+      Alert.alert('Error', error.message || 'Failed to delete profile picture');
     } finally {
       setUploading(false);
     }
@@ -302,13 +319,20 @@ function Profile() {
   };
 
   const formatDate = (dateString) => {
-    if (!dateString) return '';
+    if (!dateString) return 'Never';
     const date = new Date(dateString);
-    return date.toLocaleString();
+    if (isNaN(date.getTime())) return 'Invalid date';
+    // You can customize the format here if you want
+    return date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   const ViewProfileModal = () => {
-    console.log('Current history state:', history);
     return (
       <Modal
         animationType="slide"
@@ -321,14 +345,13 @@ function Profile() {
             <Text style={[styles.modalTitle, { color: '#2c3e50' }]}>Profile Information</Text>
             
             <View style={styles.avatarContainer}>
-              {profile.avatar_url ? (
+              {uploading ? (
+                <ActivityIndicator />
+              ) : profile.avatar_url ? (
                 <Image
                   source={{ uri: profile.avatar_url }}
-                  style={[styles.avatar, { borderColor: '#3498db' }]}
-                  onError={(e) => {
-                    console.error('Image loading error in modal:', e.nativeEvent.error);
-                    console.log('Failed to load image from URI:', profile.avatar_url);
-                  }}
+                  style={styles.avatar}
+                  resizeMode="cover"
                 />
               ) : (
                 <View style={[styles.avatarPlaceholder, { backgroundColor: '#3498db' }]}>
@@ -390,6 +413,49 @@ function Profile() {
     console.log('Manual upload result:', data, error);
   };
 
+  const CustomPicker = ({ visible, onClose, items, onSelect, selectedValue, title }) => (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalContainer}>
+        <View style={styles.pickerModalContent}>
+          <Text style={styles.pickerTitle}>{title}</Text>
+          <ScrollView style={styles.pickerScrollView}>
+            {items.map((item) => (
+              <Pressable
+                key={item.value}
+                style={[
+                  styles.pickerItem,
+                  selectedValue === item.value && styles.pickerItemSelected
+                ]}
+                onPress={() => {
+                  onSelect(item.value);
+                  onClose();
+                }}
+              >
+                <Text style={[
+                  styles.pickerItemText,
+                  selectedValue === item.value && styles.pickerItemTextSelected
+                ]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <TouchableOpacity
+            style={styles.pickerCloseButton}
+            onPress={onClose}
+          >
+            <Text style={styles.pickerCloseButtonText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -405,7 +471,9 @@ function Profile() {
         
         {/* Profile Picture Section */}
         <View style={styles.avatarSection}>
-          {profile.avatar_url ? (
+          {uploading ? (
+            <ActivityIndicator />
+          ) : profile.avatar_url ? (
             <View>
               <Image
                 key={profile.avatar_url}
@@ -421,9 +489,7 @@ function Profile() {
               />
               <TouchableOpacity
                 style={[styles.deletePhotoButton, { backgroundColor: '#e74c3c' }]}
-                onPress={() => {
-                  setProfile(prev => ({ ...prev, avatar_url: null }));
-                }}
+                onPress={handleDeletePhoto}
               >
                 <Text style={styles.deletePhotoButtonText}>Delete Photo</Text>
               </TouchableOpacity>
@@ -477,46 +543,42 @@ function Profile() {
 
         <View style={styles.inputGroup}>
           <Text style={[styles.label, { color: '#2c3e50' }]}>Grade/Year</Text>
-          <View style={[styles.pickerContainer]}>
-            <Picker
-              selectedValue={profile.grade}
-              onValueChange={(value) => setProfile({ ...profile, grade: value })}
-              style={[styles.picker]}
-              itemStyle={styles.pickerItem}
-              mode="dropdown"
-            >
-              <Picker.Item label="Select Year" value="" />
-              {years.map((year) => (
-                <Picker.Item 
-                  key={year.value} 
-                  label={year.label} 
-                  value={year.value}
-                />
-              ))}
-            </Picker>
-          </View>
+          <TouchableOpacity
+            style={[styles.pickerButton, { backgroundColor: '#ffffff' }]}
+            onPress={() => setShowGradePicker(true)}
+          >
+            <Text style={styles.pickerButtonText}>
+              {profile.grade || 'Select Year'}
+            </Text>
+          </TouchableOpacity>
+          <CustomPicker
+            visible={showGradePicker}
+            onClose={() => setShowGradePicker(false)}
+            items={years}
+            onSelect={(value) => setProfile({ ...profile, grade: value })}
+            selectedValue={profile.grade}
+            title="Select Year"
+          />
         </View>
 
         <View style={styles.inputGroup}>
           <Text style={[styles.label, { color: '#2c3e50' }]}>Course</Text>
-          <View style={[styles.pickerContainer]}>
-            <Picker
-              selectedValue={profile.course}
-              onValueChange={(value) => setProfile({ ...profile, course: value })}
-              style={[styles.picker]}
-              itemStyle={styles.pickerItem}
-              mode="dropdown"
-            >
-              <Picker.Item label="Select Course" value="" />
-              {courses.map((course) => (
-                <Picker.Item 
-                  key={course.value} 
-                  label={course.label} 
-                  value={course.value}
-                />
-              ))}
-            </Picker>
-          </View>
+          <TouchableOpacity
+            style={[styles.pickerButton, { backgroundColor: '#ffffff' }]}
+            onPress={() => setShowCoursePicker(true)}
+          >
+            <Text style={styles.pickerButtonText}>
+              {profile.course || 'Select Course'}
+            </Text>
+          </TouchableOpacity>
+          <CustomPicker
+            visible={showCoursePicker}
+            onClose={() => setShowCoursePicker(false)}
+            items={courses}
+            onSelect={(value) => setProfile({ ...profile, course: value })}
+            selectedValue={profile.course}
+            title="Select Course"
+          />
         </View>
 
         <View style={styles.inputGroup}>
@@ -621,20 +683,64 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderColor: '#dcdde1',
   },
-  pickerContainer: {
+  pickerButton: {
+    width: '100%',
+    height: 50,
     borderWidth: 1,
     borderRadius: 8,
     borderColor: '#dcdde1',
-    backgroundColor: '#ffffff',
-    marginBottom: 5,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
   },
-  picker: {
-    height: 50,
-    width: '100%',
+  pickerButtonText: {
+    fontSize: 16,
     color: '#2c3e50',
   },
+  pickerModalContent: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 20,
+    width: '90%',
+    maxHeight: '80%',
+  },
+  pickerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+    color: '#2c3e50',
+  },
+  pickerScrollView: {
+    maxHeight: 300,
+  },
   pickerItem: {
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  pickerItemSelected: {
+    backgroundColor: '#e3f2fd',
+  },
+  pickerItemText: {
     fontSize: 16,
+    color: '#2c3e50',
+  },
+  pickerItemTextSelected: {
+    color: '#3498db',
+    fontWeight: 'bold',
+  },
+  pickerCloseButton: {
+    marginTop: 15,
+    padding: 15,
+    backgroundColor: '#3498db',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  pickerCloseButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   button: {
     width: 220,
