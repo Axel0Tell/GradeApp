@@ -10,18 +10,50 @@ import {
   ActivityIndicator,
   Modal,
   Image,
-  Button,
   Platform,
-  Pressable
+  Pressable,
+  ImageBackground,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
 import { supabase } from '../services/supabaseService';
-import { useTheme } from '../contexts/ThemeContext';
 
 const SUPABASE_PROJECT_REF = 'rmhxczezynardogopcpr';
 
-function Profile() {
+// GradeKo Colors
+const gradeKoColors = {
+  grade: '#ffbd59',
+  ko: '#d0d0d0',
+  texts: '#e7c0e4',
+  background: '#2c2c3e',
+  cardBackground: '#393952',
+  inputBackground: '#252535',
+  placeholderText: '#a0a0c0',
+  danger: '#e74c3c',
+  success: '#2ecc71',
+  buttonTextDark: '#2c2c3e',
+  buttonTextLight: '#FFFFFF',
+  borderColor: '#505065',
+  overlay: 'rgba(44, 44, 62, 0.85)',
+};
+
+// Simple Icon Component
+const Icon = ({ name, size = 20, color = gradeKoColors.texts, style }) => {
+  let iconChar = '';
+  switch (name) {
+    case 'profile': iconChar = '👤'; break;
+    case 'edit': iconChar = '✏️'; break;
+    case 'save': iconChar = '💾'; break;
+    case 'delete': iconChar = '🗑️'; break;
+    case 'camera': iconChar = '📷'; break;
+    case 'logout': iconChar = "Sign out"; break;
+    case 'close': iconChar = '✕'; break;
+    default: iconChar = '?';
+  }
+  return <Text style={[{ fontSize: size, color: color }, style]}>{iconChar}</Text>;
+};
+
+function Profile({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showViewProfile, setShowViewProfile] = useState(false);
@@ -36,7 +68,6 @@ function Profile() {
     updated_at: null,
     avatar_url: null
   });
-  const { theme } = useTheme();
   const fileInputRef = useRef(null);
 
   const years = [
@@ -61,8 +92,22 @@ function Profile() {
 
   useEffect(() => {
     fetchProfile();
-  }, []);
+    if (navigation) {
+      navigation.setOptions({
+        title: 'My Profile',
+        headerStyle: { backgroundColor: gradeKoColors.background },
+        headerTintColor: gradeKoColors.grade,
+        headerTitleStyle: { fontWeight: 'bold' },
+        headerRight: () => (
+          <TouchableOpacity onPress={handleSignOut} style={{ marginRight: 15, padding: 5 }}>
+            <Icon name="logout" size={20} color={gradeKoColors.danger} />
+          </TouchableOpacity>
+        ),
+      });
+    }
+  }, [navigation]);
 
+  // --- LOGIC FUNCTIONS (no changes to logic) ---
   const handleImageUpload = async () => {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -88,12 +133,11 @@ function Profile() {
       const fileName = `${user.id}-${Date.now()}.${fileExt}`;
       const filePath = `${user.id}/${fileName}`;
 
-      // Get the user's access token
       const { data: { session } } = await supabase.auth.getSession();
       const accessToken = session?.access_token;
       if (!accessToken) throw new Error('No access token found');
 
-      // Upload using FileSystem.uploadAsync
+      setUploading(true);
       const uploadUrl = `https://${SUPABASE_PROJECT_REF}.supabase.co/storage/v1/object/avatars/${filePath}`;
       const uploadResult = await FileSystem.uploadAsync(
         uploadUrl,
@@ -112,12 +156,9 @@ function Profile() {
         throw new Error('Upload failed: ' + uploadResult.body);
       }
 
-      // Get public URL
       const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
       const publicUrl = data.publicUrl;
-      console.log('Public URL:', publicUrl);
 
-      // Save public URL to profile
       await supabase
         .from('profiles')
         .update({ avatar_url: publicUrl })
@@ -129,13 +170,11 @@ function Profile() {
     } catch (err) {
       console.error(err);
       Alert.alert('Error', err.message || 'Something went wrong');
+    } finally {
+      setUploading(false);
     }
   };
-  
-  
-  
 
-  // Handle file input change for web
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -145,11 +184,11 @@ function Profile() {
       return;
     }
     const filePath = `${user.id}/${Date.now()}-${file.name}`;
-    const { data, error } = await supabase.storage
+    const { error: uploadError } = await supabase.storage
       .from('avatars')
       .upload(filePath, file, { upsert: true });
-    if (error) {
-      alert('Upload failed: ' + error.message);
+    if (uploadError) {
+      alert('Upload failed: ' + uploadError.message);
       return;
     }
     const { data: publicData } = supabase.storage
@@ -165,21 +204,15 @@ function Profile() {
 
   const fetchProfile = async () => {
     try {
-      console.log('Fetching profile...');
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('No user found');
-
-      // Fetch profile
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .single();
-
       if (error) throw error;
-
       if (data) {
-        console.log('Profile data received:', data);
         setProfile({
           fullName: data.full_name || '',
           grade: data.grade || '',
@@ -190,7 +223,6 @@ function Profile() {
         });
       }
     } catch (error) {
-      console.error('Error in fetchProfile:', error);
       Alert.alert('Error', 'Failed to load profile data: ' + error.message);
     } finally {
       setLoading(false);
@@ -200,10 +232,8 @@ function Profile() {
   const updateProfile = async () => {
     try {
       setSaving(true);
-      console.log('Starting profile update...');
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('No user found');
-
       const now = new Date().toISOString();
       const updates = {
         id: user.id,
@@ -213,23 +243,13 @@ function Profile() {
         student_id: profile.studentId,
         updated_at: now
       };
-
-      console.log('Updating profile with:', updates);
-
-      // Update profile
       const { error } = await supabase
         .from('profiles')
         .upsert(updates);
-
       if (error) throw error;
-
-      console.log('Profile updated successfully');
       Alert.alert('Success', 'Profile updated successfully');
-      
-      // Refresh profile
       await fetchProfile();
     } catch (error) {
-      console.error('Error updating profile:', error);
       Alert.alert('Error', 'Failed to update profile: ' + error.message);
     } finally {
       setSaving(false);
@@ -241,43 +261,27 @@ function Profile() {
       setUploading(true);
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (!user || userError) throw new Error('No user found');
-
-      // Get the current avatar URL
       const currentAvatarUrl = profile.avatar_url;
       if (!currentAvatarUrl) return;
-
-      // Extract the file path from the URL
-      // Example: https://rmhxczezynardogopcpr.supabase.co/storage/v1/object/public/avatars/USER_ID/FILENAME.jpg
-      // We want: USER_ID/FILENAME.jpg
       const urlParts = currentAvatarUrl.split('/avatars/');
       const filePath = urlParts.length > 1 ? urlParts[1] : null;
       if (!filePath) throw new Error('Could not extract file path from avatar URL');
-
-      // Delete from storage
       const { error: deleteError } = await supabase.storage
         .from('avatars')
         .remove([filePath]);
-
       if (deleteError) throw new Error('Error deleting from storage: ' + deleteError.message);
-
-      // Update profile to remove avatar_url
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ avatar_url: null, updated_at: new Date().toISOString() })
         .eq('id', user.id);
-
       if (updateError) throw new Error('Error updating profile: ' + updateError.message);
-
-      // Update local state
       setProfile(prev => ({
         ...prev,
         avatar_url: null,
         updated_at: new Date().toISOString()
       }));
-
       Alert.alert('Success', 'Profile picture deleted successfully');
     } catch (error) {
-      console.error('Error deleting profile picture:', error);
       Alert.alert('Error', error.message || 'Failed to delete profile picture');
     } finally {
       setUploading(false);
@@ -289,29 +293,20 @@ function Profile() {
       setSaving(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('No user found');
-
-      // Delete profile picture if exists
       if (profile.avatar_url) {
         const filePath = profile.avatar_url.split('/').pop();
         await supabase.storage
           .from('avatars')
           .remove([filePath]);
       }
-
-      // Delete profile (no more profile_history delete)
       const { error: deleteError } = await supabase
         .from('profiles')
         .delete()
         .eq('id', user.id);
-
       if (deleteError) throw deleteError;
-
-      // Sign out the user
       await supabase.auth.signOut();
-
       Alert.alert('Success', 'Profile deleted successfully');
     } catch (error) {
-      console.error('Error deleting profile:', error);
       Alert.alert('Error', 'Failed to delete profile');
     } finally {
       setSaving(false);
@@ -322,7 +317,6 @@ function Profile() {
     if (!dateString) return 'Never';
     const date = new Date(dateString);
     if (isNaN(date.getTime())) return 'Invalid date';
-    // You can customize the format here if you want
     return date.toLocaleString(undefined, {
       year: 'numeric',
       month: 'short',
@@ -332,654 +326,361 @@ function Profile() {
     });
   };
 
-  const ViewProfileModal = () => {
-    return (
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={showViewProfile}
-        onRequestClose={() => setShowViewProfile(false)}
-      >
-        <View style={[styles.modalContainer, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
-          <View style={[styles.modalContent, { backgroundColor: '#ffffff' }]}>
-            <Text style={[styles.modalTitle, { color: '#2c3e50' }]}>Profile Information</Text>
-            
-            <View style={styles.avatarContainer}>
-              {uploading ? (
-                <ActivityIndicator />
-              ) : profile.avatar_url ? (
-                <Image
-                  source={{ uri: profile.avatar_url }}
-                  style={styles.avatar}
-                  resizeMode="cover"
-                />
-              ) : (
-                <View style={[styles.avatarPlaceholder, { backgroundColor: '#3498db' }]}>
-                  <Text style={styles.avatarPlaceholderText}>
-                    {profile.fullName ? profile.fullName[0].toUpperCase() : '?'}
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            <View style={[styles.profileInfoContainer, { backgroundColor: '#f5f6fa' }]}>
-              <View style={[styles.profileInfoRow, { borderBottomColor: '#dcdde1' }]}>
-                <Text style={[styles.profileLabel, { color: '#2c3e50' }]}>Full Name:</Text>
-                <Text style={[styles.profileValue, { color: '#2c3e50' }]}>{profile.fullName || 'Not set'}</Text>
-              </View>
-
-              <View style={[styles.profileInfoRow, { borderBottomColor: '#dcdde1' }]}>
-                <Text style={[styles.profileLabel, { color: '#2c3e50' }]}>Grade/Year:</Text>
-                <Text style={[styles.profileValue, { color: '#2c3e50' }]}>{profile.grade || 'Not set'}</Text>
-              </View>
-
-              <View style={[styles.profileInfoRow, { borderBottomColor: '#dcdde1' }]}>
-                <Text style={[styles.profileLabel, { color: '#2c3e50' }]}>Course:</Text>
-                <Text style={[styles.profileValue, { color: '#2c3e50' }]}>{profile.course || 'Not set'}</Text>
-              </View>
-
-              <View style={[styles.profileInfoRow, { borderBottomColor: '#dcdde1' }]}>
-                <Text style={[styles.profileLabel, { color: '#2c3e50' }]}>Student ID:</Text>
-                <Text style={[styles.profileValue, { color: '#2c3e50' }]}>{profile.studentId || 'Not set'}</Text>
-              </View>
-
-              {profile.updated_at && (
-                <View style={[styles.profileInfoRow, { borderBottomColor: '#dcdde1' }]}>
-                  <Text style={[styles.profileLabel, { color: '#2c3e50' }]}>Last Updated:</Text>
-                  <Text style={[styles.profileValue, { color: '#2c3e50' }]}>{formatDate(profile.updated_at)}</Text>
-                </View>
-              )}
-            </View>
-
-            <TouchableOpacity
-              style={[styles.closeButton, { backgroundColor: '#3498db' }]}
-              onPress={() => setShowViewProfile(false)}
-            >
-              <Text style={styles.closeButtonText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+  const handleSignOut = async () => {
+    Alert.alert(
+      "Sign Out",
+      "Are you sure you want to sign out?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign Out", style: "destructive",
+          onPress: async () => {
+            setSaving(true);
+            const { error } = await supabase.auth.signOut();
+            setSaving(false);
+            if (error) Alert.alert('Error', 'Failed to sign out: ' + error.message);
+          }
+        }
+      ]
     );
   };
 
-  const testUpload = async () => {
-    const response = await fetch('https://via.placeholder.com/150');
-    const blob = await response.blob();
-    const filePath = `test/${Date.now()}.png`;
-    const { data, error } = await supabase.storage
-      .from('avatars')
-      .upload(filePath, blob, { upsert: true });
-    console.log('Manual upload result:', data, error);
-  };
-
-  const CustomPicker = ({ visible, onClose, items, onSelect, selectedValue, title }) => (
+  // --- MODALS ---
+  const ViewProfileModal = () => (
     <Modal
-      visible={visible}
-      transparent={true}
       animationType="slide"
-      onRequestClose={onClose}
+      transparent={true}
+      visible={showViewProfile}
+      onRequestClose={() => setShowViewProfile(false)}
     >
-      <View style={styles.modalContainer}>
-        <View style={styles.pickerModalContent}>
-          <Text style={styles.pickerTitle}>{title}</Text>
-          <ScrollView style={styles.pickerScrollView}>
-            {items.map((item) => (
-              <Pressable
-                key={item.value}
-                style={[
-                  styles.pickerItem,
-                  selectedValue === item.value && styles.pickerItemSelected
-                ]}
-                onPress={() => {
-                  onSelect(item.value);
-                  onClose();
-                }}
-              >
-                <Text style={[
-                  styles.pickerItemText,
-                  selectedValue === item.value && styles.pickerItemTextSelected
-                ]}>
-                  {item.label}
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalViewContent}>
+          <TouchableOpacity style={styles.modalCloseButtonTop} onPress={() => setShowViewProfile(false)}>
+            <Icon name="close" size={24} color={gradeKoColors.texts} />
+          </TouchableOpacity>
+          <Text style={styles.modalTitleText}>Profile Information</Text>
+          <View style={styles.avatarContainerModal}>
+            {uploading ? (
+              <ActivityIndicator color={gradeKoColors.grade} />
+            ) : profile.avatar_url ? (
+              <Image source={{ uri: profile.avatar_url }} style={styles.avatarModal} />
+            ) : (
+              <View style={styles.avatarPlaceholderModal}>
+                <Text style={styles.avatarPlaceholderTextModal}>
+                  {profile.fullName ? profile.fullName.charAt(0).toUpperCase() : '?'}
                 </Text>
-              </Pressable>
-            ))}
+              </View>
+            )}
+          </View>
+          <ScrollView>
+            <View style={styles.profileInfoRowModal}>
+              <Text style={styles.profileLabelModal}>Full Name:</Text>
+              <Text style={styles.profileValueModal}>{profile.fullName || 'Not set'}</Text>
+            </View>
+            <View style={styles.profileInfoRowModal}>
+              <Text style={styles.profileLabelModal}>Grade/Year:</Text>
+              <Text style={styles.profileValueModal}>{profile.grade || 'Not set'}</Text>
+            </View>
+            <View style={styles.profileInfoRowModal}>
+              <Text style={styles.profileLabelModal}>Course:</Text>
+              <Text style={styles.profileValueModal}>{profile.course || 'Not set'}</Text>
+            </View>
+            <View style={styles.profileInfoRowModal}>
+              <Text style={styles.profileLabelModal}>Student ID:</Text>
+              <Text style={styles.profileValueModal}>{profile.studentId || 'Not set'}</Text>
+            </View>
+            {profile.updated_at && (
+              <View style={styles.profileInfoRowModal}>
+                <Text style={styles.profileLabelModal}>Last Updated:</Text>
+                <Text style={styles.profileValueModal}>{formatDate(profile.updated_at)}</Text>
+              </View>
+            )}
           </ScrollView>
           <TouchableOpacity
-            style={styles.pickerCloseButton}
-            onPress={onClose}
+            style={[styles.actionButton, { backgroundColor: gradeKoColors.grade, marginTop: 20 }]}
+            onPress={() => setShowViewProfile(false)}
           >
-            <Text style={styles.pickerCloseButtonText}>Cancel</Text>
+            <Text style={[styles.actionButtonText, { color: gradeKoColors.buttonTextDark }]}>CLOSE</Text>
           </TouchableOpacity>
         </View>
       </View>
     </Modal>
   );
 
+  const CustomPicker = ({ visible, onClose, items, onSelect, selectedValue, title }) => (
+    <Modal visible={visible} transparent={true} animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
+        <Pressable style={styles.pickerModalView}>
+          <Text style={styles.pickerTitleText}>{title}</Text>
+          <ScrollView style={{ maxHeight: 300 }}>
+            {items.map((item) => (
+              <TouchableOpacity key={item.value}
+                style={[styles.pickerItem, selectedValue === item.value && styles.pickerItemSelected]}
+                onPress={() => { onSelect(item.value); onClose(); }}>
+                <Text style={[styles.pickerItemText, selectedValue === item.value && styles.pickerItemTextSelected]}>
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <TouchableOpacity style={[styles.actionButton, styles.pickerCancelButton]} onPress={onClose}>
+            <Text style={[styles.actionButtonText, { color: gradeKoColors.texts }]}>CANCEL</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </TouchableOpacity>
+    </Modal>
+  );
+
+  // --- RENDER ---
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.background }]}>
-        <ActivityIndicator size="large" color={theme.primary} />
-      </View>
+      <ImageBackground source={require('../assets/bg.png')} style={styles.backgroundImageContainer} resizeMode="cover">
+        <View style={[styles.fullScreenLoader, { backgroundColor: gradeKoColors.overlay }]}>
+          <ActivityIndicator size="large" color={gradeKoColors.grade} />
+          <Text style={{ color: gradeKoColors.texts, marginTop: 15, fontSize: 16 }}>Loading Profile...</Text>
+        </View>
+      </ImageBackground>
     );
   }
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: '#f5f6fa' }]}>
-      <View style={styles.content}>
-        <Text style={[styles.title, { color: '#2c3e50' }]}>Profile</Text>
-        
-        {/* Profile Picture Section */}
-        <View style={styles.avatarSection}>
-          {uploading ? (
-            <ActivityIndicator />
-          ) : profile.avatar_url ? (
-            <View>
-              <Image
-                key={profile.avatar_url}
-                source={{ uri: profile.avatar_url }}
-                style={styles.avatar}
-                onError={(e) => {
-                  console.error('Image loading error:', e.nativeEvent.error);
-                  console.log('Failed to load image from URI:', profile.avatar_url);
-                }}
-                onLoad={() => {
-                  console.log('Image loaded successfully from URI:', profile.avatar_url);
-                }}
-              />
-              <TouchableOpacity
-                style={[styles.deletePhotoButton, { backgroundColor: '#e74c3c' }]}
-                onPress={handleDeletePhoto}
-              >
-                <Text style={styles.deletePhotoButtonText}>Delete Photo</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={[styles.avatarPlaceholder, { backgroundColor: '#3498db' }]}>
-              <Text style={styles.avatarPlaceholderText}>
-                {profile.fullName ? profile.fullName[0].toUpperCase() : '?'}
-              </Text>
-            </View>
-          )}
-          {/* Hidden file input for web */}
-          {Platform.OS === 'web' && (
-            <input
-              id="avatar-file-input"
-              type="file"
-              accept="image/*"
-              ref={fileInputRef}
-              style={{ display: 'none' }}
-              onChange={handleFileChange}
-            />
-          )}
+    <ImageBackground source={require('../assets/bg.png')} style={styles.backgroundImageContainer} resizeMode="cover">
+      <ScrollView
+        style={styles.mainScrollView}
+        contentContainerStyle={styles.contentContainer}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Avatar Card */}
+        <View style={styles.card}>
+          <View style={styles.avatarSection}>
+  <View style={styles.avatarImageContainer}>
+    {uploading ? (
+      <ActivityIndicator size="large" color={gradeKoColors.grade} />
+    ) : profile.avatar_url ? (
+      <Image source={{ uri: profile.avatar_url }} style={styles.avatarDisplay} />
+    ) : (
+      <View style={styles.avatarPlaceholderDisplay}>
+        <Text style={styles.avatarPlaceholderTextDisplay}>
+          {profile.fullName ? profile.fullName.charAt(0).toUpperCase() : '?'}
+        </Text>
+      </View>
+    )}
+  </View>
+  {Platform.OS === 'web' && (
+    <input
+      type="file"
+      accept="image/*"
+      ref={fileInputRef}
+      style={{ display: 'none' }}
+      onChange={handleFileChange}
+    />
+  )}
+  <TouchableOpacity
+    style={[styles.actionButton, styles.photoButton]}
+    onPress={
+      uploading
+        ? null
+        : Platform.OS === 'web'
+        ? () => fileInputRef.current.click()
+        : handleImageUpload
+    }
+    disabled={uploading}
+  >
+    {uploading ? (
+      <ActivityIndicator color={gradeKoColors.buttonTextDark} />
+    ) : (
+      <Icon name="camera" size={18} color={gradeKoColors.buttonTextDark} />
+    )}
+    <Text
+      style={[
+        styles.actionButtonText,
+        { color: gradeKoColors.buttonTextDark, marginLeft: 8 },
+      ]}
+    >
+      {uploading
+        ? 'UPLOADING...'
+        : profile.avatar_url
+        ? 'CHANGE PHOTO'
+        : 'ADD PHOTO'}
+    </Text>
+  </TouchableOpacity>
+  {/* Delete Photo button below Change Photo */}
+  {profile.avatar_url && !uploading && (
+    <TouchableOpacity
+      style={styles.deletePhotoTextButton}
+      onPress={handleDeletePhoto}
+      disabled={uploading}
+    >
+      <Text style={styles.deletePhotoText}>Delete Photo</Text>
+    </TouchableOpacity>
+  )}
+  
+</View>
+        </View>
+
+        {/* View Profile Info Button */}
+        <View style={styles.card}>
           <TouchableOpacity
-            style={[styles.changePhotoButton, { backgroundColor: '#3498db' }]}
-            onPress={handleImageUpload}
-          >
-            <Text style={styles.changePhotoButtonText}>
-              {profile.avatar_url ? 'Change Photo' : 'Add Photo'}
-            </Text>
+            style={[styles.actionButton, styles.viewProfileInfoButton]}
+            onPress={() => setShowViewProfile(true)} >
+            <Text style={[styles.actionButtonText, { color: gradeKoColors.buttonTextDark }]}>VIEW FULL PROFILE INFO</Text>
           </TouchableOpacity>
         </View>
 
-        {/* View Profile Button */}
-        <TouchableOpacity
-          style={[styles.viewProfileButton, { backgroundColor: '#3498db' }]}
-          onPress={() => setShowViewProfile(true)}
-        >
-          <Text style={styles.viewProfileButtonText}>View Profile</Text>
-        </TouchableOpacity>
-
-        <View style={styles.inputGroup}>
-          <Text style={[styles.label, { color: '#2c3e50' }]}>Full Name</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: '#ffffff', color: '#2c3e50' }]}
-            value={profile.fullName}
-            onChangeText={(text) => setProfile({ ...profile, fullName: text })}
-            placeholder="Enter your full name"
-            placeholderTextColor="#95a5a6"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={[styles.label, { color: '#2c3e50' }]}>Grade/Year</Text>
-          <TouchableOpacity
-            style={[styles.pickerButton, { backgroundColor: '#ffffff' }]}
-            onPress={() => setShowGradePicker(true)}
-          >
-            <Text style={styles.pickerButtonText}>
-              {profile.grade || 'Select Year'}
-            </Text>
+        {/* Edit Info Card */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Edit Information</Text>
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Full Name</Text>
+            <TextInput style={styles.input} value={profile.fullName} onChangeText={(text) => setProfile({ ...profile, fullName: text })} placeholder="Enter your full name" placeholderTextColor={gradeKoColors.placeholderText} />
+          </View>
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Grade/Year</Text>
+            <TouchableOpacity style={styles.pickerTouchable} onPress={() => setShowGradePicker(true)}>
+              <Text style={[styles.pickerTouchableText, !profile.grade && { color: gradeKoColors.placeholderText }]}>{profile.grade || 'Select Year Level'}</Text>
+              <Text style={styles.pickerArrow}>▼</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Course</Text>
+            <TouchableOpacity style={styles.pickerTouchable} onPress={() => setShowCoursePicker(true)}>
+              <Text style={[styles.pickerTouchableText, !profile.course && { color: gradeKoColors.placeholderText }]}>{profile.course || 'Select Course'}</Text>
+              <Text style={styles.pickerArrow}>▼</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Student ID</Text>
+            <TextInput style={styles.input} value={profile.studentId} onChangeText={(text) => setProfile({ ...profile, studentId: text })} placeholder="Enter your student ID" placeholderTextColor={gradeKoColors.placeholderText} />
+          </View>
+          <TouchableOpacity style={[styles.actionButton, styles.saveChangesButton]} onPress={updateProfile} disabled={saving || loading}>
+            {saving ? <ActivityIndicator color={gradeKoColors.buttonTextDark} /> : <Icon name="save" size={18} color={gradeKoColors.buttonTextDark} />}
+            <Text style={[styles.actionButtonText, { color: gradeKoColors.buttonTextDark, marginLeft: 8 }]}>SAVE CHANGES</Text>
           </TouchableOpacity>
-          <CustomPicker
-            visible={showGradePicker}
-            onClose={() => setShowGradePicker(false)}
-            items={years}
-            onSelect={(value) => setProfile({ ...profile, grade: value })}
-            selectedValue={profile.grade}
-            title="Select Year"
-          />
         </View>
 
-        <View style={styles.inputGroup}>
-          <Text style={[styles.label, { color: '#2c3e50' }]}>Course</Text>
-          <TouchableOpacity
-            style={[styles.pickerButton, { backgroundColor: '#ffffff' }]}
-            onPress={() => setShowCoursePicker(true)}
-          >
-            <Text style={styles.pickerButtonText}>
-              {profile.course || 'Select Course'}
-            </Text>
-          </TouchableOpacity>
-          <CustomPicker
-            visible={showCoursePicker}
-            onClose={() => setShowCoursePicker(false)}
-            items={courses}
-            onSelect={(value) => setProfile({ ...profile, course: value })}
-            selectedValue={profile.course}
-            title="Select Course"
-          />
-        </View>
-
-        <View style={styles.inputGroup}>
-          <Text style={[styles.label, { color: '#2c3e50' }]}>Student ID</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: '#ffffff', color: '#2c3e50' }]}
-            value={profile.studentId}
-            onChangeText={(text) => setProfile({ ...profile, studentId: text })}
-            placeholder="Enter your student ID"
-            placeholderTextColor="#95a5a6"
-          />
-        </View>
-
-        <TouchableOpacity
-          style={[styles.button, { backgroundColor: '#3498db' }]}
-          onPress={updateProfile}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text style={styles.buttonText}>Save Changes</Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Last Update Section */}
+        {/* Last Updated */}
         {profile.updated_at && (
-          <View style={[styles.lastUpdateSection, { backgroundColor: '#ecf0f1' }]}>
-            <Text style={[styles.lastUpdateText, { color: '#7f8c8d' }]}>
+          <View style={[styles.card, { marginTop: 15, paddingVertical: 15 }]}>
+            <Text style={styles.lastUpdatedText}>
               Last updated: {formatDate(profile.updated_at)}
             </Text>
           </View>
         )}
 
-        {/* Delete Profile Section */}
-        <View style={[styles.deleteSection, { backgroundColor: '#fde8e8' }]}>
-          <Text style={[styles.deleteWarning, { color: '#c0392b' }]}>
-            Warning: Deleting your profile will remove all your data and cannot be undone.
-          </Text>
-          <TouchableOpacity
-            style={[styles.deleteButton, { backgroundColor: '#e74c3c' }]}
+        {/* Danger Zone */}
+        <View style={styles.dangerZoneCard}>
+          <Text style={styles.dangerZoneTitle}>Danger Zone</Text>
+          <Text style={styles.deleteWarningText}> Warning: This action is irreversible and will delete all your data.</Text>
+          <TouchableOpacity style={[styles.actionButton, styles.deleteProfileButton]}
             onPress={() => {
-              Alert.alert(
-                'Delete Profile',
-                'Are you sure you want to delete your profile? This action cannot be undone.',
+              Alert.alert('Delete Profile', 'Are you sure? This cannot be undone.',
                 [
-                  {
-                    text: 'Cancel',
-                    style: 'cancel'
-                  },
-                  {
-                    text: 'Delete',
-                    onPress: deleteProfile,
-                    style: 'destructive'
-                  }
-                ]
-              );
-            }}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.deleteButtonText}>Delete Profile</Text>
-            )}
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'DELETE', onPress: deleteProfile, style: 'destructive' }
+                ]);
+            }} disabled={saving || loading} >
+            {saving && <ActivityIndicator color={gradeKoColors.buttonTextLight} />}
+            {!saving && <Icon name="delete" size={18} color={gradeKoColors.buttonTextLight} />}
+            <Text style={[styles.actionButtonText, { color: gradeKoColors.buttonTextLight, marginLeft: 8 }]}>DELETE MY PROFILE</Text>
           </TouchableOpacity>
         </View>
-      </View>
 
-      {/* View Profile Modal */}
-      <ViewProfileModal />
-    </ScrollView>
+        <ViewProfileModal />
+        <CustomPicker visible={showGradePicker} onClose={() => setShowGradePicker(false)} items={years} onSelect={(value) => setProfile({ ...profile, grade: value })} selectedValue={profile.grade} title="Select Year Level" />
+        <CustomPicker visible={showCoursePicker} onClose={() => setShowCoursePicker(false)} items={courses} onSelect={(value) => setProfile({ ...profile, course: value })} selectedValue={profile.course} title="Select Course" />
+      </ScrollView>
+    </ImageBackground>
   );
 }
 
+// --- STYLES ---
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  content: {
-    padding: 20,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginBottom: 30,
-    textAlign: 'center',
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 16,
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  input: {
-    width: '100%',
-    height: 50,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    borderColor: '#dcdde1',
-  },
-  pickerButton: {
-    width: '100%',
-    height: 50,
-    borderWidth: 1,
-    borderRadius: 8,
-    borderColor: '#dcdde1',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-  },
-  pickerButtonText: {
-    fontSize: 16,
-    color: '#2c3e50',
-  },
-  pickerModalContent: {
-    backgroundColor: 'white',
+  backgroundImageContainer: { flex: 1 },
+  mainScrollView: { flex: 1 },
+  fullScreenLoader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  contentContainer: { padding: 15, paddingBottom: 40 },
+
+  card: {
+    backgroundColor: gradeKoColors.cardBackground,
     borderRadius: 12,
     padding: 20,
-    width: '90%',
-    maxHeight: '80%',
-  },
-  pickerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
-    color: '#2c3e50',
-  },
-  pickerScrollView: {
-    maxHeight: 300,
-  },
-  pickerItem: {
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  pickerItemSelected: {
-    backgroundColor: '#e3f2fd',
-  },
-  pickerItemText: {
-    fontSize: 16,
-    color: '#2c3e50',
-  },
-  pickerItemTextSelected: {
-    color: '#3498db',
-    fontWeight: 'bold',
-  },
-  pickerCloseButton: {
-    marginTop: 15,
-    padding: 15,
-    backgroundColor: '#3498db',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  pickerCloseButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  button: {
-    width: 220,
-    alignSelf: 'center',
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 5,
-    marginTop: 14,
-    marginBottom: 8,
-    backgroundColor: '#3498db',
-    borderWidth: 1,
-    borderColor: '#2980b9',
-    boxShadow: Platform.OS === 'web' ? '0 1px 4px rgba(52,152,219,0.08)' : undefined,
-    transition: Platform.OS === 'web' ? 'background 0.2s, box-shadow 0.2s' : undefined,
-  },
-  buttonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: 'white',
-    letterSpacing: 0.5,
-    textTransform: 'none',
-  },
-  lastUpdateSection: {
-    marginTop: 20,
-    padding: 15,
-    borderRadius: 8,
-  },
-  lastUpdateText: {
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  historySection: {
-    marginTop: 30,
-    padding: 15,
-    borderRadius: 8,
-  },
-  historyTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
-  },
-  historyItem: {
-    marginBottom: 15,
-    padding: 15,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#dcdde1',
-  },
-  historyDate: {
-    fontSize: 12,
-    marginBottom: 5,
-  },
-  historyChanges: {
-    fontSize: 14,
-  },
-  viewProfileButton: {
-    width: 220,
-    alignSelf: 'center',
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 5,
-    marginBottom: 14,
-    backgroundColor: '#3498db',
-    borderWidth: 1,
-    borderColor: '#2980b9',
-    boxShadow: Platform.OS === 'web' ? '0 1px 4px rgba(52,152,219,0.08)' : undefined,
-    transition: Platform.OS === 'web' ? 'background 0.2s, box-shadow 0.2s' : undefined,
-  },
-  viewProfileButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: 'white',
-    letterSpacing: 0.5,
-    textTransform: 'none',
-  },
-  avatarSection: {
-    alignItems: 'center',
     marginBottom: 20,
-  },
-  avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    marginBottom: 10,
-    borderWidth: 3,
-    borderColor: '#3498db',
-  },
-  avatarPlaceholder: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 10,
-    borderWidth: 3,
-    borderColor: '#3498db',
-  },
-  avatarPlaceholderText: {
-    fontSize: 48,
-    color: 'white',
-    fontWeight: 'bold',
-  },
-  changePhotoButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-    elevation: 2,
+    elevation: 4,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
   },
-  changePhotoButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  deletePhotoButton: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 15,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  deletePhotoButtonText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  deleteSection: {
-    marginTop: 40,
-    padding: 20,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e74c3c',
-  },
-  deleteWarning: {
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 15,
-  },
-  deleteButton: {
-    width: 220,
-    alignSelf: 'center',
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 5,
-    backgroundColor: '#e74c3c',
-    borderWidth: 1,
-    borderColor: '#c0392b',
-    marginTop: 10,
-    marginBottom: 8,
-    boxShadow: Platform.OS === 'web' ? '0 1px 4px rgba(231,76,60,0.08)' : undefined,
-    transition: Platform.OS === 'web' ? 'background 0.2s, box-shadow 0.2s' : undefined,
-  },
-  deleteButtonText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: 'white',
-    letterSpacing: 0.5,
-    textTransform: 'none',
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    width: '90%',
-    maxHeight: '80%',
+  deletePhotoTextButton: {
+  marginTop: 10,
+  marginBottom: 5,
+  alignSelf: 'center',
+},
+deletePhotoText: {
+  color: gradeKoColors.danger,
+  fontWeight: 'bold',
+  fontSize: 16,
+  textAlign: 'center',
+},
+
+  avatarSection: { alignItems: 'center' },
+  avatarImageContainer: { position: 'relative', marginBottom: 15, alignItems: 'center' },
+  avatarDisplay: { width: 140, height: 140, borderRadius: 70, borderWidth: 3, borderColor: gradeKoColors.grade },
+  avatarPlaceholderDisplay: { width: 140, height: 140, borderRadius: 70, backgroundColor: gradeKoColors.grade, justifyContent: 'center', alignItems: 'center', borderWidth: 3, borderColor: gradeKoColors.ko },
+  avatarPlaceholderTextDisplay: { fontSize: 60, color: gradeKoColors.buttonTextDark, fontWeight: 'bold' },
+  deletePhotoFab: { position: 'absolute', bottom: 5, right: 50, backgroundColor: gradeKoColors.danger, borderRadius: 20, padding: 8, elevation: 3 },
+
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', color: gradeKoColors.texts, marginBottom: 20, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: gradeKoColors.borderColor, textAlign: 'center' },
+  inputGroup: { marginBottom: 18 },
+  label: { fontSize: 16, color: gradeKoColors.texts, marginBottom: 8, fontWeight: '500' },
+  input: { backgroundColor: gradeKoColors.inputBackground, color: gradeKoColors.texts, borderWidth: 1, borderColor: gradeKoColors.borderColor, borderRadius: 8, paddingHorizontal: 15, paddingVertical: 12, fontSize: 16, height: 50 },
+
+  pickerTouchable: { backgroundColor: gradeKoColors.inputBackground, borderWidth: 1, borderColor: gradeKoColors.borderColor, borderRadius: 8, paddingHorizontal: 15, height: 50, justifyContent: 'space-between', alignItems: 'center', flexDirection: 'row' },
+  pickerTouchableText: { fontSize: 16, color: gradeKoColors.texts },
+  pickerArrow: { color: gradeKoColors.texts, fontSize: 14, fontWeight: 'bold' },
+
+  actionButton: { flexDirection: 'row', paddingVertical: 13, paddingHorizontal: 20, borderRadius: 25, alignItems: 'center', justifyContent: 'center', marginVertical: 8, elevation: 2, minHeight: 48 },
+  actionButtonText: { fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
+
+  photoButton: { backgroundColor: gradeKoColors.grade, marginTop: 10 },
+  viewProfileInfoButton: { backgroundColor: gradeKoColors.ko, borderWidth: 1, borderColor: gradeKoColors.grade },
+  saveChangesButton: { backgroundColor: gradeKoColors.grade },
+
+  lastUpdatedText: { fontSize: 13, color: gradeKoColors.ko, textAlign: 'center', fontStyle: 'italic' },
+
+  dangerZoneCard: {
+    backgroundColor: gradeKoColors.cardBackground,
     borderRadius: 12,
     padding: 20,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    marginTop: 25,
+    borderWidth: 1.5,
+    borderColor: gradeKoColors.danger,
+    elevation: 4, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 3,
   },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
-  },
-  profileInfoContainer: {
-    marginBottom: 20,
-  },
-  profileInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
-  },
-  profileLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    flex: 1,
-  },
-  profileValue: {
-    fontSize: 16,
-    flex: 2,
-    textAlign: 'right',
-  },
-  closeButton: {
-    width: '100%',
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-    marginTop: 10,
-  },
-  closeButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: 'white',
-  },
-  avatarContainer: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
+  dangerZoneTitle: { fontSize: 18, fontWeight: 'bold', color: gradeKoColors.danger, textAlign: 'center', marginBottom: 10 },
+  deleteProfileButton: { backgroundColor: gradeKoColors.danger, marginTop: 15 },
+  deleteWarningText: { fontSize: 14, color: gradeKoColors.ko, textAlign: 'center', marginTop: 5, lineHeight: 20 },
+
+  // Modal Styles
+  modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.80)' },
+  modalViewContent: { backgroundColor: gradeKoColors.cardBackground, width: '90%', maxHeight: '85%', borderRadius: 15, padding: 20, paddingTop: 15, elevation: 5 },
+  modalCloseButtonTop: { position: 'absolute', top: 10, right: 10, padding: 5, zIndex: 10 },
+  modalTitleText: { fontSize: 20, fontWeight: 'bold', color: gradeKoColors.texts, marginBottom: 20, textAlign: 'center' },
+  avatarContainerModal: { alignItems: 'center', marginBottom: 20 },
+  avatarModal: { width: 100, height: 100, borderRadius: 50, borderWidth: 2, borderColor: gradeKoColors.grade },
+  avatarPlaceholderModal: { width: 100, height: 100, borderRadius: 50, backgroundColor: gradeKoColors.grade, justifyContent: 'center', alignItems: 'center' },
+  avatarPlaceholderTextModal: { fontSize: 40, color: gradeKoColors.buttonTextDark, fontWeight: 'bold' },
+  profileInfoRowModal: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: gradeKoColors.borderColor },
+  profileLabelModal: { fontSize: 15, color: gradeKoColors.texts, fontWeight: '600', flex: 0.4 },
+  profileValueModal: { fontSize: 15, color: gradeKoColors.ko, textAlign: 'right', flex: 0.6, flexShrink: 1 },
+
+  pickerModalView: { backgroundColor: gradeKoColors.cardBackground, width: '85%', maxHeight: '70%', borderRadius: 10, padding: 15, elevation: 5 },
+  pickerTitleText: { fontSize: 18, fontWeight: 'bold', color: gradeKoColors.texts, marginBottom: 15, textAlign: 'center' },
+  pickerItem: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: gradeKoColors.borderColor },
+  pickerItemSelected: { backgroundColor: gradeKoColors.grade },
+  pickerItemText: { fontSize: 16, color: gradeKoColors.texts, textAlign: 'center' },
+  pickerItemTextSelected: { color: gradeKoColors.buttonTextDark, fontWeight: 'bold' },
+  pickerCancelButton: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: gradeKoColors.ko, marginTop: 15 },
 });
 
-export default Profile; 
+export default Profile;
